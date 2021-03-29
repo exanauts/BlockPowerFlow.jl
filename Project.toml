@@ -1,0 +1,11 @@
+name = "BlockPowerFlow"
+uuid = "0ca6dcf5-c23f-4097-a3ba-dae6c919a0c0"
+authors = ["fpacaud <francoispacaud8@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+LinearOperators = "5c8ed15e-5a4c-59e4-a42b-c7e8811fb125"
+MatrixMarket = "4d4711f2-db25-561a-b6b3-d35e7d4047d3"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
