@@ -54,7 +54,7 @@ function cusolverRfSetupHost(n, nnzA, h_csrRowPtrA, h_csrColIndA, h_csrValA, nnz
 end
 
 function cusolverRfSetupDevice(n, nnzA, csrRowPtrA, csrColIndA, csrValA, nnzL, csrRowPtrL, csrColIndL, csrValL, nnzU, csrRowPtrU, csrColIndU, csrValU, P, Q, handle)
-    ccall((:cusolverRfSetupDevice, CUSOLVER.libcusolver()), cusolverStatus_t, (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint}, Ptr{Cint}, cusolverRfHandle_t), n, nnzA, csrRowPtrA, csrColIndA, csrValA, nnzL, csrRowPtrL, csrColIndL, csrValL, nnzU, csrRowPtrU, csrColIndU, csrValU, P, Q, handle)
+    ccall((:cusolverRfSetupDevice, CUSOLVER.libcusolver()), cusolverStatus_t, (Cint, Cint, CuPtr{Cint}, CuPtr{Cint}, CuPtr{Cdouble}, Cint, CuPtr{Cint}, CuPtr{Cint}, CuPtr{Cdouble}, Cint, CuPtr{Cint}, CuPtr{Cint}, CuPtr{Cdouble}, CuPtr{Cint}, CuPtr{Cint}, cusolverRfHandle_t), n, nnzA, csrRowPtrA, csrColIndA, csrValA, nnzL, csrRowPtrL, csrColIndL, csrValL, nnzU, csrRowPtrU, csrColIndU, csrValU, P, Q, handle)
 end
 
 function cusolverRfResetValues(n, nnzA, csrRowPtrA, csrColIndA, csrValA, P, Q, handle)

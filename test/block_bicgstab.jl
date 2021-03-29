@@ -46,4 +46,4 @@ end
 datafile = joinpath(dirname(@__FILE__), "..", "data", "case300.txt")
 J = mmread(datafile)
 
-xsol, residuals = blk_bicgstab(J; nrhs=32, gpu=true)
+xsol, residuals = blk_bicgstab(J; nrhs=32, gpu=false)
