@@ -1,6 +1,9 @@
 module BlockPowerFlow
 
+using LinearAlgebra
 using Printf
+using SparseArrays
+
 using LinearOperators
 
 using CUDA
