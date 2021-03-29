@@ -6,6 +6,8 @@ using CUDA
 using CUDA.CUSPARSE
 using CUDA.CUSOLVER
 
+import CUDA.CUBLAS: unsafe_batch
+
 include("libcusolverRf_common.jl")
 include("libcusolverRf_api.jl")
 
@@ -17,14 +19,14 @@ end
 
 function _cusolverRfDestroy(handle)
     if handle != C_NULL
-        handle_ref = Ref{cusolverRfHandle_t}(handle)
-        cusolverRfCreate(handle_ref)
+        cusolverRfDestroy(handle)
         handle = C_NULL
     end
 end
 
 struct CusolverRfLU{T} <: LinearAlgebra.Factorization{T}
     gH::Ptr{cusolverRfHandle_t}
+    batchsize::Int
     n::Int
     m::Int
     nnzA::Int
@@ -34,6 +36,8 @@ struct CusolverRfLU{T} <: LinearAlgebra.Factorization{T}
     dQ::CuVector{Cint}
     dT::CuVector{T}
 end
+
+cudestroy!(rflu::CusolverRfLU) = _cusolverRfDestroy(rflu.gH)
 
 function glu_analysis_host(
     n, m, nnzA, h_rowsA, h_colsA, h_valsA,
@@ -68,7 +72,7 @@ function glu_analysis_host(
     h_colsB = copy(h_colsA)
     h_valsB = copy(h_valsA)
     h_mapBfromA = zeros(Cint, nnzA)
-    for i in 1:nnzA
+    @inbounds for i in 1:nnzA
         h_mapBfromA[i] = i # identity matrix
     end
 
@@ -173,6 +177,15 @@ function glu_analysis_host(
     h_P = h_Qreorder[h_Plu .+ 1]
     h_Q = h_Qreorder[h_Qlu .+ 1]
 
+    if buffer_lu != C_NULL
+        Base.Libc.free(buffer_lu)
+        buffer_lu = C_NULL
+    end
+    if buffer_cpu != C_NULL
+        Base.Libc.free(buffer_cpu)
+        buffer_cpu = C_NULL
+    end
+
     return (
         nnzL=nnzL, rowsL=h_rowsL, colsL=h_colsL, valsL=h_valsL,
         nnzU=nnzU, rowsU=h_rowsU, colsU=h_colsU, valsU=h_valsU,
@@ -182,7 +195,7 @@ end
 
 function CusolverRfLU(
     A::CuSparseMatrixCSR{T};
-    nrhs=1, ordering=:AMD, tol=1e-8,
+    nrhs=1, ordering=:AMD, tol=1e-8, batchsize=1,
 ) where T
     m, n = size(A)
     @assert m == n # only squared matrices are supported
@@ -193,7 +206,7 @@ function CusolverRfLU(
     # Allocations (device)
     d_P = CUDA.zeros(Cint, m)
     d_Q = CUDA.zeros(Cint, n)
-    d_T = CUDA.zeros(Cdouble, m * nrhs)
+    d_T = CUDA.zeros(Cdouble, m * nrhs * batchsize * 2)
 
     # Load data
     d_rowsA = A.rowPtr
@@ -217,7 +230,7 @@ function CusolverRfLU(
 
     ## OPTIONS
     # Set fast mode
-    status = cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
+    status = cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
     # Set numeric properties
     nzero = 0.0
     nboost = 0.0
@@ -237,21 +250,38 @@ function CusolverRfLU(
     )
 
     # Assemble internal data structures
-    status = cusolverRfSetupHost(
-        n, nnzA, h_rowsA, h_colsA, h_valsA,
-        lu.nnzL, lu.rowsL, lu.colsL, lu.valsL,
-        lu.nnzU, lu.rowsU, lu.colsU, lu.valsU,
-        lu.P, lu.Q,
-        gH
-    )
-
-    # Analyze available parallelism
-    status = cusolverRfAnalyze(gH)
-    # LU refactorization
-    status = cusolverRfRefactor(gH)
+    if batchsize == 1
+        status = cusolverRfSetupHost(
+            n, nnzA, h_rowsA, h_colsA, h_valsA,
+            lu.nnzL, lu.rowsL, lu.colsL, lu.valsL,
+            lu.nnzU, lu.rowsU, lu.colsU, lu.valsU,
+            lu.P, lu.Q,
+            gH
+        )
+        # Analyze available parallelism
+        status = cusolverRfAnalyze(gH)
+        # LU refactorization
+        status = cusolverRfRefactor(gH)
+    else
+        h_valsA_batch = zeros(batchsize, nnzA)
+        h_valsA_batch = Vector{Float64}[copy(h_valsA) for i in 1:batchsize]
+        ptrA_batch = pointer.(h_valsA_batch)
+        status = cusolverRfBatchSetupHost(
+            batchsize,
+            n, nnzA, h_rowsA, h_colsA, ptrA_batch,
+            lu.nnzL, lu.rowsL, lu.colsL, lu.valsL,
+            lu.nnzU, lu.rowsU, lu.colsU, lu.valsU,
+            lu.P, lu.Q,
+            gH
+        )
+        # Analyze available parallelism
+        status = cusolverRfBatchAnalyze(gH)
+        # LU refactorization
+        status = cusolverRfBatchRefactor(gH)
+    end
 
     return CusolverRfLU{T}(
-        gH, n, m, nnzA,
+        gH, batchsize, n, m, nnzA,
         h_rowsA, h_colsA, lu.P, lu.Q, d_T
     )
 end
@@ -273,9 +303,22 @@ end
 function solve!(x::CuArray{T}, rflu::CusolverRfLU{T}, b::CuArray{T}) where T
     n = rflu.n
     nrhs = 1
-    copy!(x, b)
+    copyto!(x, b)
     # Forward and backward solve
     status = cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
+    return
+end
+
+function solve_batch!(x::Vector{CuVector{T}}, rflu::CusolverRfLU{T}, b::Vector{CuVector{T}}) where T
+    @assert rflu.batchsize > 1
+    n = rflu.n
+    nrhs = 1
+    for i in 1:rflu.batchsize
+        copyto!(x[i], b[i])
+    end
+    Xptrs = unsafe_batch(x)
+    # Forward and backward solve
+    status = cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
     return
 end
 

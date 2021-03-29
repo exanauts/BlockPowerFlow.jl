@@ -90,7 +90,7 @@ function cusolverRfBatchSetupHost(batchSize, n, nnzA, h_csrRowPtrA, h_csrColIndA
 end
 
 function cusolverRfBatchResetValues(batchSize, n, nnzA, csrRowPtrA, csrColIndA, csrValA_array, P, Q, handle)
-    ccall((:cusolverRfBatchResetValues, CUSOLVER.libcusolver()), cusolverStatus_t, (Cint, Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{Ptr{Cdouble}}, Ptr{Cint}, Ptr{Cint}, cusolverRfHandle_t), batchSize, n, nnzA, csrRowPtrA, csrColIndA, csrValA_array, P, Q, handle)
+    ccall((:cusolverRfBatchResetValues, CUSOLVER.libcusolver()), cusolverStatus_t, (Cint, Cint, Cint, CuPtr{Cint}, CuPtr{Cint}, CuPtr{Ptr{Cdouble}}, CuPtr{Cint}, CuPtr{Cint}, cusolverRfHandle_t), batchSize, n, nnzA, csrRowPtrA, csrColIndA, csrValA_array, P, Q, handle)
 end
 
 function cusolverRfBatchAnalyze(handle)
@@ -102,7 +102,7 @@ function cusolverRfBatchRefactor(handle)
 end
 
 function cusolverRfBatchSolve(handle, P, Q, nrhs, Temp, ldt, XF_array, ldxf)
-    ccall((:cusolverRfBatchSolve, CUSOLVER.libcusolver()), cusolverStatus_t, (cusolverRfHandle_t, Ptr{Cint}, Ptr{Cint}, Cint, Ptr{Cdouble}, Cint, Ptr{Ptr{Cdouble}}, Cint), handle, P, Q, nrhs, Temp, ldt, XF_array, ldxf)
+    ccall((:cusolverRfBatchSolve, CUSOLVER.libcusolver()), cusolverStatus_t, (cusolverRfHandle_t, CuPtr{Cint}, CuPtr{Cint}, Cint, CuPtr{Cdouble}, Cint, CuPtr{Ptr{Cdouble}}, Cint), handle, P, Q, nrhs, Temp, ldt, XF_array, ldxf)
 end
 
 function cusolverRfBatchZeroPivot(handle, position)
