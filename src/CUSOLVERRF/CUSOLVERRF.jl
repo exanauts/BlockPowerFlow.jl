@@ -76,6 +76,19 @@ function glu_analysis_host(
             n, nnzA, desca,
             h_rowsA, h_colsA, h_Qreorder,
         )
+    elseif ordering == :MDQ
+        CUSOLVER.cusolverSpXcsrsymmdqHost(
+            spH,
+            n, nnzA, desca,
+            h_rowsA, h_colsA, h_Qreorder,
+        )
+
+    elseif ordering == :METIS
+        CUSOLVER.cusolverSpXcsrmetisndHost(
+            spH,
+            n, nnzA, desca,
+            h_rowsA, h_colsA, C_NULL, h_Qreorder,
+        )
     elseif ordering == :RCM
         CUSOLVER.cusolverSpXcsrsymrcmHost(
             spH,
