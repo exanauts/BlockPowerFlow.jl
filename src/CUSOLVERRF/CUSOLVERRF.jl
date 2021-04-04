@@ -224,8 +224,8 @@ function glu_analysis_host(
 end
 
 function CusolverRfLU(
-    A::CuSparseMatrixCSR{T};
-    nrhs=1, ordering=:AMD, tol=1e-8, fast_mode=false,
+    A::AbstractCuSparseMatrix{T};
+    nrhs=1, ordering=:AMD, tol=1e-8, fast_mode=true,
 ) where T
     m, n = size(A)
     @assert m == n # only squared matrices are supported
@@ -241,9 +241,15 @@ function CusolverRfLU(
 
     # Allocations (host)
     # Transfer data to host
-    h_rowsA = A.rowPtr |> Vector{Cint}
-    h_colsA = A.colVal |> Vector{Cint}
-    h_valsA = A.nzVal |> Vector{T}
+    if isa(A, CuSparseMatrixCSR)
+        h_rowsA = A.rowPtr |> Vector{Cint}
+        h_colsA = A.colVal |> Vector{Cint}
+        h_valsA = A.nzVal |> Vector{T}
+    elseif isa(A, CuSparseMatrixCSC)
+        h_rowsA = A.colPtr |> Vector{Cint}
+        h_colsA = A.rowVal |> Vector{Cint}
+        h_valsA = A.nzVal |> Vector{T}
+    end
 
     # cusolverRf is 0-based
     h_rowsA .-= 1
@@ -288,9 +294,9 @@ function CusolverRfLU(
         gH
     )
     # Analyze available parallelism
-    status = cusolverRfAnalyze(gH)
+    status = CUDA.@sync cusolverRfAnalyze(gH)
     # LU refactorization
-    status = cusolverRfRefactor(gH)
+    status = CUDA.@sync cusolverRfRefactor(gH)
 
     return CusolverRfLU{T}(
         gH, nrhs, n, m, nnzA,
@@ -299,15 +305,15 @@ function CusolverRfLU(
 end
 
 # Update factorization inplace
-function update!(rflu::CusolverRfLU{T}, A::CuSparseMatrixCSR{T}) where T
-    status = cusolverRfResetValues(
+function update!(rflu::CusolverRfLU{T}, A::AbstractCuSparseMatrix{T}) where T
+    status = CUDA.@sync cusolverRfResetValues(
         rflu.n, rflu.nnzA,
         rflu.drowsA, rflu.dcolsA, A.nzVal, rflu.dP, rflu.dQ,
         rflu.gH
     )
 
     # LU refactorization
-    status = cusolverRfRefactor(rflu.gH)
+    status = CUDA.@sync cusolverRfRefactor(rflu.gH)
     return
 end
 
@@ -317,10 +323,13 @@ function solve!(x::CuArray{T}, rflu::CusolverRfLU{T}, b::CuArray{T}) where T
     nrhs = 1
     copyto!(x, b)
     # Forward and backward solve
-    status = cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
+    status = CUDA.@sync cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
     return
 end
 
+LinearAlgebra.lu(A::AbstractCuSparseMatrix; options...) = CusolverRfLU(A; options...)
+LinearAlgebra.lu!(rflu::CusolverRfLU, A::AbstractCuSparseMatrix) = update!(rflu, A)
+LinearAlgebra.ldiv!(x::CuArray, rflu::CusolverRfLU, b::CuArray) = solve!(x, rflu, b)
 
 function CusolverRfLUBatch(
     A::CuSparseMatrixCSR{T}, batchsize::Int;
@@ -391,9 +400,9 @@ function CusolverRfLUBatch(
         gH
     )
     # Analyze available parallelism
-    status = cusolverRfBatchAnalyze(gH)
+    status = CUDA.@sync cusolverRfBatchAnalyze(gH)
     # LU refactorization
-    status = cusolverRfBatchRefactor(gH)
+    status = CUDA.@sync cusolverRfBatchRefactor(gH)
 
     return CusolverRfLUBatch{T}(
         gH, batchsize, n, m, nnzA,
@@ -403,14 +412,14 @@ end
 
 # Update factorization inplace
 function update!(rflu::CusolverRfLUBatch{T}, A::CuSparseMatrixCSR{T}) where T
-    status = cusolverRfResetValues(
+    status = CUDA.@sync cusolverRfResetValues(
         rflu.n, rflu.nnzA,
         rflu.drowsA, rflu.dcolsA, A.nzVal, rflu.dP, rflu.dQ,
         rflu.gH
     )
 
     # LU refactorization
-    status = cusolverRfRefactor(rflu.gH)
+    status = CUDA.@sync cusolverRfRefactor(rflu.gH)
     return
 end
 
@@ -424,7 +433,7 @@ function solve!(x::Vector{CuVector{T}}, rflu::CusolverRfLUBatch{T}, b::Vector{Cu
     end
     Xptrs = unsafe_batch(x)
     # Forward and backward solve
-    status = cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
     return
 end
 
