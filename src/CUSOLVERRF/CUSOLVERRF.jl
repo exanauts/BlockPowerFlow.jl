@@ -6,7 +6,7 @@ using CUDA
 using CUDA.CUSPARSE
 using CUDA.CUSOLVER
 
-import CUDA.CUBLAS: unsafe_batch
+import CUDA.CUBLAS: unsafe_batch, unsafe_strided_batch
 
 include("libcusolverRf_common.jl")
 include("libcusolverRf_api.jl")
@@ -318,7 +318,7 @@ function update!(rflu::CusolverRfLU{T}, A::AbstractCuSparseMatrix{T}) where T
 end
 
 # Solve linear-system
-function solve!(x::CuArray{T}, rflu::CusolverRfLU{T}, b::CuArray{T}) where T
+function LinearAlgebra.ldiv!(x::CuArray{T}, rflu::CusolverRfLU{T}, b::CuArray{T}) where T
     n = rflu.n
     nrhs = 1
     copyto!(x, b)
@@ -326,10 +326,16 @@ function solve!(x::CuArray{T}, rflu::CusolverRfLU{T}, b::CuArray{T}) where T
     status = CUDA.@sync cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
     return
 end
+function LinearAlgebra.ldiv!(rflu::CusolverRfLU{T}, x::CuArray{T}) where T
+    n = rflu.n
+    nrhs = 1
+    # Forward and backward solve
+    status = CUDA.@sync cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
+    return
+end
 
 LinearAlgebra.lu(A::AbstractCuSparseMatrix; options...) = CusolverRfLU(A; options...)
 LinearAlgebra.lu!(rflu::CusolverRfLU, A::AbstractCuSparseMatrix) = update!(rflu, A)
-LinearAlgebra.ldiv!(x::CuArray, rflu::CusolverRfLU, b::CuArray) = solve!(x, rflu, b)
 
 function CusolverRfLUBatch(
     A::CuSparseMatrixCSR{T}, batchsize::Int;
@@ -412,26 +418,50 @@ end
 
 # Update factorization inplace
 function update!(rflu::CusolverRfLUBatch{T}, A::CuSparseMatrixCSR{T}) where T
-    status = CUDA.@sync cusolverRfResetValues(
-        rflu.n, rflu.nnzA,
-        rflu.drowsA, rflu.dcolsA, A.nzVal, rflu.dP, rflu.dQ,
+    ptrs = [pointer(A.nzVal) for i in 1:rflu.batchsize]
+    Aptrs = CuArray(ptrs)
+    status = CUDA.@sync cusolverRfBatchResetValues(
+        rflu.batchsize, rflu.n, rflu.nnzA,
+        rflu.drowsA, rflu.dcolsA, Aptrs, rflu.dP, rflu.dQ,
         rflu.gH
     )
 
     # LU refactorization
-    status = CUDA.@sync cusolverRfRefactor(rflu.gH)
+    status = CUDA.@sync cusolverRfBatchRefactor(rflu.gH)
     return
 end
 
+LinearAlgebra.lu!(rflu::CusolverRfLUBatch, A::AbstractCuSparseMatrix) = update!(rflu, A)
+
 # Solve linear-system
 function solve!(x::Vector{CuVector{T}}, rflu::CusolverRfLUBatch{T}, b::Vector{CuVector{T}}) where T
-    @assert rflu.batchsize > 1
     n = rflu.n
     nrhs = 1
     for i in 1:rflu.batchsize
         copyto!(x[i], b[i])
     end
     Xptrs = unsafe_batch(x)
+    # Forward and backward solve
+    status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    return
+end
+
+function LinearAlgebra.ldiv!(x::CuMatrix{T}, rflu::CusolverRfLUBatch{T}, b::CuMatrix{T}) where T
+    @assert size(x, 2) == size(b, 2) == rflu.batchsize
+    n = rflu.n
+    nrhs = 1
+    copyto!(x, b)
+    Xptrs = unsafe_strided_batch(x)
+    # Forward and backward solve
+    status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    return
+end
+
+function LinearAlgebra.ldiv!(rflu::CusolverRfLUBatch{T}, X::CuMatrix{T}) where T
+    @assert size(X, 2) == rflu.batchsize
+    n = rflu.n
+    nrhs = 1
+    Xptrs = unsafe_strided_batch(X)
     # Forward and backward solve
     status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
     return
