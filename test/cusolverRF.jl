@@ -21,7 +21,7 @@ using CUDA.CUSPARSE
 
     @testset "LU factorization" begin
         rflu = CUSOLVERRF.CusolverRfLU(gJ; ordering=:AMD)
-        CUDA.@time CUSOLVERRF.solve!(x, rflu, gb)
+        CUDA.@time ldiv!(x, rflu, gb)
 
         # Test that first RHS is the same as the one computed
         # using UMFPACK
@@ -31,7 +31,7 @@ using CUDA.CUSPARSE
         # Test update
         gJ.nzVal .*= 2.0
         CUSOLVERRF.update!(rflu, gJ)
-        CUDA.@time CUSOLVERRF.solve!(x, rflu, gb)
+        CUDA.@time ldiv!(x, rflu, gb)
         res = Array(x)
         @test isapprox(res, 0.5 * solution)
 
@@ -44,19 +44,37 @@ using CUDA.CUSPARSE
     @testset "LU factorization (batch)" begin
         # Test batch mode
         nbatch = 32
+        rflu = CUSOLVERRF.CusolverRfLUBatch(gJ, nbatch)
+
+        # With vectors
         gB = Vector{CuVector{Float64}}(undef, nbatch)
         gX = Vector{CuVector{Float64}}(undef, nbatch)
         for i in 1:nbatch
-            gB[i] = gb
-            gX[i] = x
+            gB[i] = i .* gb
+            gX[i] = copy(x)
         end
-        rflu = CUSOLVERRF.CusolverRfLUBatch(gJ, nbatch)
         CUDA.@time CUSOLVERRF.solve!(gX, rflu, gB)
         for i in 1:nbatch
             res = Array(gX[i])
-            α = 1.0
+            α = 1.0 * i
             @test isapprox(res, α * (J \ b[1:n]))
         end
+
+        CUSOLVERRF.update!(rflu, gJ)
+
+        # With matrices
+        gBm = CuMatrix{Float64}(undef, n, nbatch)
+        gXm = CuMatrix{Float64}(undef, n, nbatch)
+        for i in 1:nbatch
+            gBm[:, i] .= i .* gb
+        end
+        CUDA.@time ldiv!(gXm, rflu, gBm)
+        for i in 1:nbatch
+            res = Array(gXm[:, i])
+            α = 1.0 * i
+            @test isapprox(res, α * (J \ b[1:n]))
+        end
+        #
         CUSOLVERRF.cudestroy!(rflu)
     end
 end
