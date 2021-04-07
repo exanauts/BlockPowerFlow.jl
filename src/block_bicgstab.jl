@@ -10,6 +10,7 @@
 # Alexis Montoison, <alexis.montoison@polymtl.ca>
 # Montréal, December 2020.
 
+export BlockBicgstabSolver, block_bicgstab, block_bicgstab!
 
 mutable struct SimpleStats{T}
   solved :: Bool
@@ -19,52 +20,93 @@ mutable struct SimpleStats{T}
   status :: String
 end
 
-display2(iter, verbose) = (verbose > 0) && (mod(iter, verbose) == 0)
+abstract type KrylovSolver{T,S} end
 
-# export block_bicgstab
+struct BlockBicgstabSolver{T,S} <: KrylovSolver{T,S}
+  X     :: S
+  Y     :: S
+  P     :: S
+  R     :: S
+  V     :: S
+  Q     :: S
+  U     :: S
+  K     :: S
+  D     :: S
+  α     :: S
+  β     :: S
+  stats :: SimpleStats{T}
+end
+
+function BlockBicgstabSolver(A, B)
+  n, m = size(A)
+  s, p = size(B)
+  S = typeof(B)
+  T = eltype(B)
+  X = S(undef, n, p)
+  Y = S(undef, n, p)
+  P = S(undef, n, p)
+  R = S(undef, n, p)
+  V = S(undef, n, p)
+  Q = S(undef, n, p)
+  U = S(undef, n, p)
+  K = S(undef, p, p)
+  D = S(undef, p, p)
+  α = S(undef, p, p)
+  β = S(undef, p, p)
+  stats = SimpleStats(false, false, T[], T[], "unknown")
+  return BlockBicgstabSolver{T,S}(X, Y, P, R, V, Q, U, K, D, α, β, stats)
+end
+
+display2(iter, verbose) = (verbose > 0) && (mod(iter, verbose) == 0)
 
 """
     (X, stats) = block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: AbstractMatrix{T}=B,
-                                M=opEye(), N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
-                                itmax :: Int=0, verbose :: Int=0) where T <: AbstractFloat
+                                N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+                                itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
 """
-function block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: AbstractMatrix{T}=B,
-                        M=opEye(), N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
-                        itmax :: Int=0, verbose :: Int=0) where T <: AbstractFloat
+function block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; kwargs...) where T <: AbstractFloat
+  solver = BlockBicgstabSolver(A, B)
+  block_bicgstab!(solver, A, B; kwargs...)
+end
+
+function block_bicgstab!(solver :: BlockBicgstabSolver{T,Matrix{T}},
+                         A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: AbstractMatrix{T}=B,
+                         N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+                         itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
 
   n, m = size(A)
-  p, s = size(B)
+  s, p = size(B)
   m == n || error("System must be square")
-  m == p || error("Inconsistent problem size")
-  (verbose > 0) && @printf("BLOCK-BICGSTAB: system of size %d with %d right-hand sides\n", n, s)
+  n == s || error("Inconsistent problem size")
+  (verbose > 0) && @printf("BLOCK-BICGSTAB: system of size %d with %d right-hand sides\n", n, p)
 
-  # Check M == Iₘ and N == Iₙ
-  MisI = isa(M, opEye)
+  # Check N == Iₙ
   NisI = isa(N, opEye)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
-  # Determine the storage type of B
-  S = typeof(B)
-
-  # Preconditionned matrix
-  MA = M * A
   # Set up workspace.
-  X = zeros(T, n, s)  # Xₖ
-  R = similar(B)      # Rₖ = B - A * X
-  mul!(R, M, B)
-  mul!(R, MA, X, -1.0, 1.0)
-  P = copy(R)         # Pₖ
+  X, P, R, V, Q, U, K, D, α, β, stats = solver.X, solver.P, solver.R, solver.V, solver.Q, solver.U, solver.K, solver.D, solver.α, solver.β, solver.stats
+  Cᵀ = C'
 
-  # Allocate working memory
-  V = zeros(T, n, s)
-  Q = zeros(T, n, s)
-  K = zeros(T, s, s)
-  α = zeros(T, s, s)
-  β = zeros(T, s, s)
+  X .= zero(T)
+  P .= B
+  R .= B
+  V .= zero(T)
+  Q .= zero(T)
+  U .= zero(T)
+  K .= zero(T)
+  D .= zero(T)
+  α .= zero(T)
+  β .= zero(T)
+
+  # Right preconditioner
+  if !NisI
+    Y = solver.Y
+    Y .= zero(T)
+  end
 
   # Compute residual norm ‖R₀‖₂.
   rNorm = norm(R)
@@ -72,7 +114,9 @@ function block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: Abs
   iter = 0
   itmax == 0 && (itmax = 2*n)
 
-  rNorms = [rNorm;]
+  rNorms = stats.residuals
+  !history && !isempty(rNorms) && (rNorms = T[])
+  history && push!(rNorms, rNorm)
   ε = atol + rtol * rNorm
   (verbose > 0) && @printf("%5s  %7s\n", "k", "‖Rₖ‖")
   display2(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm)
@@ -80,41 +124,34 @@ function block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: Abs
   # Stopping criterion.
   solved = rNorm ≤ ε
   tired = iter ≥ itmax
-  breakdown = false
   status = "unknown"
 
-  Cᵀ = copy(R)'
-
   while !(solved || tired)
-    mul!(V, MA, P)              # V = M * A * P
-    mul!(K, Cᵀ, V)              # K = C' * V
 
-    # Dense factorization (inplace)
+    NisI ? Y = P : mul!(Y, N, P)           # Yₖ = N⁻¹Pₖ
+    mul!(V, A, Y)                          # Vₖ = AYₖ
+    mul!(K, Cᵀ, V)                         # Kₖ = CᵀVₖ
+    mul!(D, Cᵀ, R)                         # Dₖ = CᵀRₖ
     K_factorized = lu!(K)
-
-    mul!(α, Cᵀ, R)              # α = K \ (C' * R)
-    ldiv!(K_factorized, α)
-
-    mul!(R, V, α, -1.0, 1.0)    # R = R - V * α
-    mul!(Q, MA, R)              # Q = M * A * R
-    ω = norm(dot(Q, R)) / norm(dot(Q, Q))
-
-    X .+= ω .* R                # X = X + ω * R
-    mul!(X, P, α, 1.0, 1.0)     # X = X + P * α
-
-    R .-= ω .* Q                # R = R - ω * Q
-
-    mul!(β, Cᵀ, Q)              # β = K \ (C' * Q)
-    ldiv!(K_factorized, β)
-
-    # P = R + (P - ω * V) * β
-    Q .= P .- ω .* V            # Q = P - ω * V
-    P .= R                      # P = R
-    mul!(P, Q, β, -1.0, 1.0)    # P = P - Q * β
+    α .= D; ldiv!(K_factorized, α)         # Kₖαₖ = Dₖ, αₖ is a p×p matrix
+    U .= R
+    mul!(U, V, α, -one(T), one(T))         # Uₖ = Rₖ - Vₖαₖ
+    mul!(R, Y, α)                          # Rₐᵤₓ = N⁻¹Pₖαₖ, temporary storage
+    @. X = X + R                           # Xₐᵤₓ = Xₖ + Rₐᵤₓ
+    NisI ? Y = U : mul!(Y, N, U)           # Yₖ = N⁻¹Uₖ
+    mul!(Q, A, Y)                          # Qₖ = AYₖ
+    ω = norm(dot(Q, U)) / norm(dot(Q, Q))  # ωₖ = ‖⟨Qₖ,Uₖ⟩‖ / ‖⟨Qₖ,Qₖ⟩‖, ‖•‖ is the Frobenius norm
+    @. X = X + ω * Y                       # Xₖ₊₁ = Xₐᵤₓ + ωₖN⁻¹Uₖ
+    @. R = U - ω * Q                       # Rₖ₊₁ = Uₖ - ωₖQₖ
+    D = mul!(D, Cᵀ, Q)                     # Dₖ = CᵀQₖ
+    β .= D; ldiv!(K_factorized, β)         # Kₖβₖ = Dₖ, βₖ is a p×p matrix
+    @. U = P - ω * V                       # Uₐᵤₓ = Pₖ - ωₖVₖ, temporary storage
+    mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
+    @. P = R - P                           # Pₖ₊₁ = Rₖ₊₁ - Pₐᵤₓ
 
     iter = iter + 1
     rNorm = norm(R)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     # Update stopping criterion.
     solved = rNorm ≤ ε
@@ -123,49 +160,56 @@ function block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: Abs
   end
   (verbose > 0) && @printf("\n")
 
-  status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
-  stats = SimpleStats(solved, false, rNorms, T[], status)
+  stats.solved = solved
+  stats.status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
   return (X, stats)
 end
 
 # We split the implementation on the GPU, as we are calling
 # CUSOLVER directly in this case.
-function block_bicgstab(A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; C :: AbstractMatrix{T}=B,
-                        M=opEye(), N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
-                        itmax :: Int=0, verbose :: Int=0) where T <: AbstractFloat
+function block_bicgstab(A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; kwargs...) where T <: AbstractFloat
+  solver = BlockBicgstabSolver(A, B)
+  block_bicgstab!(solver, A, B; kwargs...)
+end
+
+function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
+                         A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; C :: AbstractMatrix{T}=B,
+                         N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+                         itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
 
   n, m = size(A)
-  p, s = size(B)
+  s, p = size(B)
   m == n || error("System must be square")
-  m == p || error("Inconsistent problem size")
-  (verbose > 0) && @printf("BLOCK-BICGSTAB: system of size %d with %d right-hand sides\n", n, s)
+  n == s || error("Inconsistent problem size")
+  (verbose > 0) && @printf("BLOCK-BICGSTAB: system of size %d with %d right-hand sides\n", n, p)
 
-  # Check M == Iₘ and N == Iₙ
-  MisI = isa(M, opEye)
+  # Check N == Iₙ
   NisI = isa(N, opEye)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
-  # Determine the storage type of B
-  S = typeof(B)
-
-  # Preconditionned matrix
-  Ax = CUDA.zeros(T, n, s)
   # Set up workspace.
-  X = CUDA.zeros(T, n, s)  # Xₖ
-  R = similar(B)      # Rₖ = B - A * X
-  mul!(R, M, B)
-  P = copy(R)         # Pₖ
+  X, P, R, V, Q, U, K, D, α, β, stats = solver.X, solver.P, solver.R, solver.V, solver.Q, solver.U, solver.K, solver.D, solver.α, solver.β, solver.stats
+  Cᵀ = C'
 
-  # Allocate working memory
-  V = CUDA.zeros(T, n, s)
-  Q = CUDA.zeros(T, n, s)
-  K = CUDA.zeros(T, s, s)
-  α = CUDA.zeros(T, s, s)
-  β = CUDA.zeros(T, s, s)
+  X .= zero(T)
+  P .= B
+  R .= B
+  V .= zero(T)
+  Q .= zero(T)
+  U .= zero(T)
+  K .= zero(T)
+  D .= zero(T)
+  α .= zero(T)
+  β .= zero(T)
+
+  # Right preconditioner
+  if !NisI
+    Y = solver.Y
+    Y .= zero(T)
+  end
 
   # Compute residual norm ‖R₀‖₂.
   rNorm = norm(R)
@@ -173,7 +217,9 @@ function block_bicgstab(A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; C :: Abstra
   iter = 0
   itmax == 0 && (itmax = 2*n)
 
-  rNorms = [rNorm;]
+  rNorms = stats.residuals
+  !history && !isempty(rNorms) && (rNorms = T[])
+  history && push!(rNorms, rNorm)
   ε = atol + rtol * rNorm
   (verbose > 0) && @printf("%5s  %7s\n", "k", "‖Rₖ‖")
   display2(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm)
@@ -181,43 +227,36 @@ function block_bicgstab(A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; C :: Abstra
   # Stopping criterion.
   solved = rNorm ≤ ε
   tired = iter ≥ itmax
-  breakdown = false
   status = "unknown"
 
-  Cᵀ = copy(R)'
-
   while !(solved || tired)
-    mul!(Ax, A, P)
-    mul!(V, M, Ax)              # V = M * A * P
-    mul!(K, Cᵀ, V)              # K = C' * V
 
-    # Dense factorization (inplace)
+    NisI ? Y = P : mul!(Y, N, P)           # Yₖ = N⁻¹Pₖ
+    mul!(V, A, Y)                          # Vₖ = AYₖ
+    mul!(K, Cᵀ, V)                         # Kₖ = CᵀVₖ
+    mul!(D, Cᵀ, R)                         # Dₖ = CᵀRₖ
+    α .= D
     K_factorized, perm = CUSOLVER.getrf!(K)
-
-    mul!(α, Cᵀ, R)              # α = K \ (C' * R)
-    α = CUSOLVER.getrs!('N', K_factorized, perm, α)
-
-    mul!(R, V, α, -1.0, 1.0)    # R = R - V * α
-    mul!(Ax, A, R)
-    mul!(Q, M, Ax)              # Q = M * A * R
-    ω = norm(dot(Q, R)) / norm(dot(Q, Q))
-
-    X .+= ω .* R                # X = X + ω * R
-    mul!(X, P, α, 1.0, 1.0)     # X = X + P * α
-
-    R .-= ω .* Q                # R = R - ω * Q
-
-    mul!(β, Cᵀ, Q)              # β = K \ (C' * Q)
-    β = CUSOLVER.getrs!('N', K_factorized, perm, β)
-
-    # P = R + (P - ω * V) * β
-    Q .= P .- ω .* V            # Q = P - ω * V
-    P .= R                      # P = R
-    mul!(P, Q, β, -1.0, 1.0)    # P = P - Q * β
+    CUSOLVER.getrs!('N', K_factorized, perm, α) # Kₖαₖ = Dₖ, αₖ is a p×p matrix
+    U .= R
+    mul!(U, V, α, -one(T), one(T))         # Uₖ = Rₖ - Vₖαₖ
+    mul!(R, Y, α)                          # Rₐᵤₓ = N⁻¹Pₖαₖ, temporary storage
+    X .+= R                                # Xₐᵤₓ = Xₖ + Rₐᵤₓ
+    NisI ? Y = U : mul!(Y, N, U)           # Yₖ = N⁻¹Uₖ
+    mul!(Q, A, Y)                          # Qₖ = AYₖ
+    ω = norm(dot(Q, U)) / norm(dot(Q, Q))  # ωₖ = ‖⟨Qₖ,Uₖ⟩‖ / ‖⟨Qₖ,Qₖ⟩‖, ‖•‖ is the Frobenius norm
+    X .+= ω .* Y                           # Xₖ₊₁ = Xₐᵤₓ + ωₖN⁻¹Uₖ
+    R .= U .- ω .* Q                       # Rₖ₊₁ = Uₖ - ωₖQₖ
+    D = mul!(D, Cᵀ, Q)                     # Dₖ = CᵀQₖ
+    β .= D
+    CUSOLVER.getrs!('N', K_factorized, perm, β) # Kₖβₖ = Dₖ, βₖ is a p×p matrix
+    U .= P .- ω .* V                       # Uₐᵤₓ = Pₖ - ωₖVₖ, temporary storage
+    mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
+    P .= R .- P                            # Pₖ₊₁ = Rₖ₊₁ - Pₐᵤₓ
 
     iter = iter + 1
     rNorm = norm(R)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     # Update stopping criterion.
     solved = rNorm ≤ ε
@@ -226,8 +265,7 @@ function block_bicgstab(A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; C :: Abstra
   end
   (verbose > 0) && @printf("\n")
 
-  status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
-  stats = SimpleStats(solved, false, rNorms, T[], status)
+  stats.solved = solved
+  stats.status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
   return (X, stats)
 end
-
