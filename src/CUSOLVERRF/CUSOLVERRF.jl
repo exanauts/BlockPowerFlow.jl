@@ -338,7 +338,7 @@ LinearAlgebra.lu(A::AbstractCuSparseMatrix; options...) = CusolverRfLU(A; option
 LinearAlgebra.lu!(rflu::CusolverRfLU, A::AbstractCuSparseMatrix) = update!(rflu, A)
 
 function CusolverRfLUBatch(
-    A::CuSparseMatrixCSR{T}, batchsize::Int;
+    A::AbstractCuSparseMatrix{T}, batchsize::Int;
     ordering=:AMD, tol=1e-8, fast_mode=false,
 ) where T
     m, n = size(A)
@@ -355,9 +355,15 @@ function CusolverRfLUBatch(
 
     # Allocations (host)
     # Transfer data to host
-    h_rowsA = A.rowPtr |> Vector{Cint}
-    h_colsA = A.colVal |> Vector{Cint}
-    h_valsA = A.nzVal |> Vector{T}
+    if isa(A, CuSparseMatrixCSR)
+        h_rowsA = A.rowPtr |> Vector{Cint}
+        h_colsA = A.colVal |> Vector{Cint}
+        h_valsA = A.nzVal |> Vector{T}
+    elseif isa(A, CuSparseMatrixCSC)
+        h_rowsA = A.colPtr |> Vector{Cint}
+        h_colsA = A.rowVal |> Vector{Cint}
+        h_valsA = A.nzVal |> Vector{T}
+    end
 
     # cusolverRf is 0-based
     h_rowsA .-= 1
