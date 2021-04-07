@@ -235,9 +235,10 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
     mul!(V, A, Y)                          # Vₖ = AYₖ
     mul!(K, Cᵀ, V)                         # Kₖ = CᵀVₖ
     mul!(D, Cᵀ, R)                         # Dₖ = CᵀRₖ
-    α .= D
-    K_factorized, perm = CUSOLVER.getrf!(K)
-    CUSOLVER.getrs!('N', K_factorized, perm, α) # Kₖαₖ = Dₖ, αₖ is a p×p matrix
+    α .= D                                 # Kₖαₖ = Dₖ, αₖ is a p×p matrix
+    K_factorized, τ = CUSOLVER.geqrf!(K)
+    CUSOLVER.ormqr!('L', 'T', K_factorized, τ, α)
+    CUBLAS.trsm!('L', 'U', 'N', 'N', one(T), K_factorized, α)
     U .= R
     mul!(U, V, α, -one(T), one(T))         # Uₖ = Rₖ - Vₖαₖ
     mul!(R, Y, α)                          # Rₐᵤₓ = N⁻¹Pₖαₖ, temporary storage
@@ -248,8 +249,9 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
     X .+= ω .* Y                           # Xₖ₊₁ = Xₐᵤₓ + ωₖN⁻¹Uₖ
     R .= U .- ω .* Q                       # Rₖ₊₁ = Uₖ - ωₖQₖ
     D = mul!(D, Cᵀ, Q)                     # Dₖ = CᵀQₖ
-    β .= D
-    CUSOLVER.getrs!('N', K_factorized, perm, β) # Kₖβₖ = Dₖ, βₖ is a p×p matrix
+    β .= D                                 # Kₖβₖ = Dₖ, βₖ is a p×p matrix
+    CUSOLVER.ormqr!('L', 'T', K_factorized, τ, β)
+    CUBLAS.trsm!('L', 'U', 'N', 'N', one(T), K_factorized, β)
     U .= P .- ω .* V                       # Uₐᵤₓ = Pₖ - ωₖVₖ, temporary storage
     mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
     P .= R .- P                            # Pₖ₊₁ = Rₖ₊₁ - Pₐᵤₓ
