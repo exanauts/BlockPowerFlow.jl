@@ -147,7 +147,6 @@ function glu_analysis_host(
     )
 
     n_bytes = size_lu[] * sizeof(Cint)
-    println("Run LU factorization on the host with ", n_bytes, " bytes")
     buffer_lu = Base.Libc.malloc(n_bytes)
     pivot_threshold = 1.0
 
@@ -423,7 +422,7 @@ function CusolverRfLUBatch(
 end
 
 # Update factorization inplace
-function update!(rflu::CusolverRfLUBatch{T}, A::CuSparseMatrixCSR{T}) where T
+function update!(rflu::CusolverRfLUBatch{T}, A::AbstractCuSparseMatrix) where T
     ptrs = [pointer(A.nzVal) for i in 1:rflu.batchsize]
     Aptrs = CuArray(ptrs)
     status = CUDA.@sync cusolverRfBatchResetValues(
@@ -470,6 +469,17 @@ function LinearAlgebra.ldiv!(rflu::CusolverRfLUBatch{T}, X::CuMatrix{T}) where T
     Xptrs = unsafe_strided_batch(X)
     # Forward and backward solve
     status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    return
+end
+
+function rf_batch_refactor!(rflu::CusolverRfLUBatch{T}, Anzval::CuMatrix{T}) where T
+    Aptrs = unsafe_strided_batch(Anzval)
+    CUDA.@sync cusolverRfBatchResetValues(
+        rflu.batchsize, rflu.n, rflu.nnzA,
+        rflu.drowsA, rflu.dcolsA, Aptrs, rflu.dP, rflu.dQ,
+        rflu.gH
+    )
+    CUDA.@sync cusolverRfBatchRefactor(rflu.gH)
     return
 end
 

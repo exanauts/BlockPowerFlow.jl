@@ -83,7 +83,7 @@ end
     ccall((:cusolverRfExtractSplitFactorsHost, CUSOLVER.libcusolver()), cusolverStatus_t, (cusolverRfHandle_t, Ptr{Cint}, Ptr{Ptr{Cint}}, Ptr{Ptr{Cint}}, Ptr{Ptr{Cdouble}}, Ptr{Cint}, Ptr{Ptr{Cint}}, Ptr{Ptr{Cint}}, Ptr{Ptr{Cdouble}}), handle, h_nnzL, h_csrRowPtrL, h_csrColIndL, h_csrValL, h_nnzU, h_csrRowPtrU, h_csrColIndU, h_csrValU)
 end
 
-@checked function cusolverRfSolve(handle, P, Q, nrhs, Temp, ldt, XF, ldxf)
+function cusolverRfSolve(handle, P, Q, nrhs, Temp, ldt, XF, ldxf)
     ccall((:cusolverRfSolve, CUSOLVER.libcusolver()), cusolverStatus_t, (cusolverRfHandle_t, CuPtr{Cint}, CuPtr{Cint}, Cint, CuPtr{Cdouble}, Cint, CuPtr{Cdouble}, Cint), handle, P, Q, nrhs, Temp, ldt, XF, ldxf)
 end
 
