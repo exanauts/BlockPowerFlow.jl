@@ -13,6 +13,7 @@ using CUDA.CUSOLVER
 export CUSOLVERRF
 
 include("block_bicgstab.jl")
+include("block_gmres.jl")
 
 include("CUSOLVERRF/CUSOLVERRF.jl")
 using .CUSOLVERRF
