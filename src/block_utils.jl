@@ -91,3 +91,5 @@ end
 
 allocate_if(bool, solver, v, S, n) = bool && isempty(solver.:($v)::S) && (solver.:($v)::S = S(undef, n))
 allocate_if(bool, solver, v, S, m, n) = bool && isempty(solver.:($v)::S) && (solver.:($v)::S = S(undef, m, n))
+
+mulorldiv!(y, P, x, ldiv::Bool) = ldiv ? ldiv!(y, P, x) : mul!(y, P, x)

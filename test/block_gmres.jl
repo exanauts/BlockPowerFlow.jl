@@ -4,15 +4,15 @@ using MatrixMarket
 
 using BlockPowerFlow
 
-using CUDA
-using CUDA.CUSPARSE
+# using CUDA
+# using CUDA.CUSPARSE
 import ExaPF
 import ExaPF: LinearSolvers
 
 const LS = LinearSolvers
 const BPF = BlockPowerFlow
 
-function blk_bicgstab(J; nrhs=10, nblocks=8, gpu=false)
+function blk_gmres(J; nrhs=10, nblocks=8, gpu=false)
     n = size(J, 1)
     # Init preconditioner
     device = gpu ? ExaPF.CUDADevice() : ExaPF.CPU()
@@ -29,22 +29,22 @@ function blk_bicgstab(J; nrhs=10, nblocks=8, gpu=false)
         gJ = CuSparseMatrixCSR(J)
         gB = CuArray{Float64, 2}(B)
         @time LS.update(precond, gJ, device)
-        (xsol, stat) = @time BPF.block_bicgstab(
-            gJ, gB; M=precond, itmax=500, atol=1e-4
+        (xsol, stat) = @time BPF.block_gmres(
+            gJ, gB; M=precond, history=true, itmax=500, atol=1e-4
         )
     else
         @time LS.update(precond, J, device)
-        (xsol, stat) = @time BPF.block_bicgstab(
-            J, B; M=precond, itmax=500, atol=1e-4
+        (xsol, stat) = @time BPF.block_gmres(
+            J, B; M=precond, history=true, itmax=500, atol=1e-4
         )
     end
     println(stat.status)
-    println(length(stat.residuals))
-    println(stat.residuals[end])
+    println(stat.niter)
+    gpu ? println(norm(gB - gJ * xsol)) : println(norm(B - J * xsol))
     return xsol, stat.residuals
 end
 
 datafile = joinpath(dirname(@__FILE__), "..", "data", "case300.txt")
 J = mmread(datafile)
 
-xsol, residuals = blk_bicgstab(J; nrhs=32, gpu=false)
+xsol, residuals = blk_gmres(J; nrhs=32, gpu=false)
