@@ -4,6 +4,28 @@ Union type of `T` and `Complex{T}` where T is an `AbstractFloat`.
 """
 const FloatOrComplex{T} = Union{T, Complex{T}} where T <: AbstractFloat
 
+function copy_triangle(Q::Matrix{FC}, R::Matrix{FC}, k::Int) where FC <: FloatOrComplex
+    for i = 1:k
+        for j = i:k
+            R[i,j] = Q[i,j]
+        end
+    end
+end
+
+@kernel function copy_triangle_kernel!(dest, src)
+    i, j = @index(Global, NTuple)
+    if j >= i
+        @inbounds dest[i, j] = src[i, j]
+    end
+end
+
+function copy_triangle(Q::AbstractMatrix{FC}, R::AbstractMatrix{FC}, k::Int) where FC <: FloatOrComplex
+    backend = get_backend(Q)
+    ndrange = (k, k)
+    copy_triangle_kernel!(backend)(R, Q; ndrange=ndrange)
+    KernelAbstractions.synchronize(backend)
+end
+
 # Reduced QR factorization with Householder reflections:
 # Q, R = householder(A)
 #
@@ -25,11 +47,7 @@ function householder!(Q::AbstractMatrix{FC}, R::AbstractMatrix{FC}, τ::Abstract
     n, k = size(Q)
     R .= zero(FC)
     LAPACK.geqrf!(Q, τ)
-    for i = 1:k
-        for j = i:k
-            R[i,j] = Q[i,j]
-        end
-    end
+    copy_triangle(Q, R, k)
     !compact && LAPACK.orgqr!(Q, τ)
     return Q, R
 end

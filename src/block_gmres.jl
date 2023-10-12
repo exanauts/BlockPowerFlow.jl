@@ -3,8 +3,6 @@
 # Alexis Montoison, <alexis.montoison@polymtl.ca>
 # Chicago, October 2023.
 
-include("block_utils.jl")
-
 export BlockGMRESSolver, block_gmres, block_gmres!
 
 abstract type BlockKrylovSolver{T,FC,SV,SM} end
@@ -75,7 +73,7 @@ function warm_start!(solver :: BlockGMRESSolver, X0)
   SM = typeof(solver.X)
   (n == n2 && p == p2) || error("X0 should have size ($n, $p)")
   solver.Δx = SM(undef, n, p)
-  solver.Δx .= X0
+  copyto!(solver.Δx, X0)
   solver.warm_start = true
   return solver
 end
@@ -223,7 +221,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
     W .= B .- W
     restart && (X .+= ΔX)
   else
-    W .= B
+    copyto!(W, B)
   end
   MisI || mulorldiv!(R₀, M, W, ldiv)  # R₀ = M(B - AX₀)
   RNorm = norm(R₀)                    # ‖R₀‖_F   
@@ -265,7 +263,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
     end
 
     if restart
-      Xr .= zero(FC)  # Xr === ΔX when restart is set to true
+      fill!(Xr, zero(FC))  # Xr === ΔX when restart is set to true
       if npass ≥ 1
         mul!(W, A, X)
         W .= B .- W
@@ -274,7 +272,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
     end
     
     # Initial Γ and V₁
-    V[1] .= R₀
+    copyto!(V[1], R₀)
     householder!(V[1], Z[1], τ[1])
 
     npass = npass + 1
@@ -339,7 +337,8 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
 
       # Update residual norm estimate.
       # ‖ M(B - AXₖ) ‖_F = ‖Λbarₖ₊₁‖_F
-      RNorm = norm(D2)
+      C .= D2
+      RNorm = norm(C)
       history && push!(RNorms, RNorm)
 
       # Update the number of coefficients in Rₖ
@@ -350,7 +349,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
       inner_tired = restart ? inner_iter ≥ min(mem, inner_itmax) : inner_iter ≥ inner_itmax
       timer = time_ns() - start_time
       overtimed = timer > timemax_ns
-      kdisplay(iter+inner_iter, verbose) && @printf("%5d  %5d  %7.3e  %.2fs\n", npass, iter+inner_iter, RNorm, ktimer(start_time))
+      kdisplay(iter+inner_iter, verbose) && @printf("%5d  %5d  %7.1e  %.2fs\n", npass, iter+inner_iter, RNorm, ktimer(start_time))
 
       # Compute Vₖ₊₁.
       if !(solved || inner_tired || overtimed)
@@ -358,7 +357,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
           push!(V, SM(undef, n, p))
           push!(Z, SM(undef, p, p))
         end
-        V[inner_iter+1] .= Q
+        copyto!(V[inner_iter+1], Q)
         Z[inner_iter+1] .= D2
       end
     end
@@ -379,7 +378,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
       mul!(Xr, V[i], Y[i], γ, β)
     end
     if !NisI
-      solver.P .= Xr
+      copyto!(solver.P, Xr)
       mulorldiv!(Xr, N, solver.P, ldiv)
     end
     restart && (X .+= Xr)

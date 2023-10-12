@@ -13,11 +13,11 @@
 export BlockBicgstabSolver, block_bicgstab, block_bicgstab!
 
 mutable struct SimpleStats{T}
-  solved :: Bool
-  inconsistent :: Bool
+  niter     :: Int
+  solved    :: Bool
   residuals :: Vector{T}
-  Aresiduals :: Vector{T}
-  status :: String
+  timer     :: Float64
+  status    :: String
 end
 
 abstract type KrylovSolver{T,S} end
@@ -53,11 +53,9 @@ function BlockBicgstabSolver(A, B)
   D = S(undef, p, p)
   α = S(undef, p, p)
   β = S(undef, p, p)
-  stats = SimpleStats(false, false, T[], T[], "unknown")
+  stats = SimpleStats(0, false, T[], 0.0, "unknown")
   return BlockBicgstabSolver{T,S}(X, Y, P, R, V, Q, U, K, D, α, β, stats)
 end
-
-display2(iter, verbose) = (verbose > 0) && (mod(iter, verbose) == 0)
 
 """
     (X, stats) = block_bicgstab(A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: AbstractMatrix{T}=B,
@@ -71,8 +69,12 @@ end
 
 function block_bicgstab!(solver :: BlockBicgstabSolver{T,Matrix{T}},
                          A :: AbstractMatrix{T}, B :: AbstractMatrix{T}; C :: AbstractMatrix{T}=B,
-                         N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
-                         itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
+                         N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
+                         itmax :: Int=0, timemax::Float64=Inf, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
+
+  # Timer
+  start_time = time_ns()
+  timemax_ns = 1e9 * timemax
 
   n, m = size(A)
   s, p = size(B)
@@ -81,7 +83,7 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,Matrix{T}},
   (verbose > 0) && @printf("BLOCK-BICGSTAB: system of size %d with %d right-hand sides\n", n, p)
 
   # Check N == Iₙ
-  NisI = isa(N, opEye)
+  NisI = (N === I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
@@ -118,15 +120,16 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,Matrix{T}},
   !history && !isempty(rNorms) && (rNorms = T[])
   history && push!(rNorms, rNorm)
   ε = atol + rtol * rNorm
-  (verbose > 0) && @printf("%5s  %7s\n", "k", "‖Rₖ‖")
-  display2(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm)
+  (verbose > 0) && @printf("%5s  %7s  %5s\n", "k", "‖Rₖ‖", "timer")
+  kdisplay(iter, verbose) && @printf("%5d  %7.1e  %.2fs\n", iter, rNorm, ktimer(start_time))
 
   # Stopping criterion.
   solved = rNorm ≤ ε
   tired = iter ≥ itmax
+  overtimed = false
   status = "unknown"
 
-  while !(solved || tired)
+  while !(solved || tired || overtimed)
 
     NisI ? Y = P : mul!(Y, N, P)           # Yₖ = N⁻¹Pₖ
     mul!(V, A, Y)                          # Vₖ = AYₖ
@@ -144,9 +147,9 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,Matrix{T}},
     @. X = X + ω * Y                       # Xₖ₊₁ = Xₐᵤₓ + ωₖN⁻¹Uₖ
     @. R = U - ω * Q                       # Rₖ₊₁ = Uₖ - ωₖQₖ
     D = mul!(D, Cᵀ, Q)                     # Dₖ = CᵀQₖ
-    β .= D; ldiv!(K_factorized, β)         # Kₖβₖ = Dₖ, βₖ is a p×p matrix
+    β .= D; ldiv!(K_factorized, β)         # Kₖβₖ = Dₖ, βₖ is a p×p matrix
     @. U = P - ω * V                       # Uₐᵤₓ = Pₖ - ωₖVₖ, temporary storage
-    mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
+    mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
     @. P = R - P                           # Pₖ₊₁ = Rₖ₊₁ - Pₐᵤₓ
 
     iter = iter + 1
@@ -156,12 +159,21 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,Matrix{T}},
     # Update stopping criterion.
     solved = rNorm ≤ ε
     tired = iter ≥ itmax
-    display2(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm)
+    timer = time_ns() - start_time
+    overtimed = timer > timemax_ns
+    kdisplay(iter, verbose) && @printf("%5d  %7.1e  %.2fs\n", iter, rNorm, ktimer(start_time))
   end
   (verbose > 0) && @printf("\n")
 
+  # Termination status
+  tired     && (status = "maximum number of iterations exceeded")
+  solved    && (status = "solution good enough given atol and rtol")
+  overtimed && (status = "time limit exceeded")
+
+  stats.niter = iter
   stats.solved = solved
-  stats.status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
+  stats.timer = ktimer(start_time)
+  stats.status = status
   return (X, stats)
 end
 
@@ -172,10 +184,14 @@ function block_bicgstab(A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; kwargs...) 
   block_bicgstab!(solver, A, B; kwargs...)
 end
 
-function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
+function block_bicgstab!(solver :: BlockBicgstabSolver{T,<:CuMatrix{T}},
                          A :: CuSparseMatrixCSR{T}, B :: CuMatrix{T}; C :: AbstractMatrix{T}=B,
-                         N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
-                         itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
+                         N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
+                         itmax :: Int=0, timemax::Float64=Inf, verbose :: Int=0, history :: Bool=false) where T <: AbstractFloat
+
+  # Timer
+  start_time = time_ns()
+  timemax_ns = 1e9 * timemax
 
   n, m = size(A)
   s, p = size(B)
@@ -184,7 +200,7 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
   (verbose > 0) && @printf("BLOCK-BICGSTAB: system of size %d with %d right-hand sides\n", n, p)
 
   # Check N == Iₙ
-  NisI = isa(N, opEye)
+  NisI = (N === I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
@@ -221,15 +237,16 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
   !history && !isempty(rNorms) && (rNorms = T[])
   history && push!(rNorms, rNorm)
   ε = atol + rtol * rNorm
-  (verbose > 0) && @printf("%5s  %7s\n", "k", "‖Rₖ‖")
-  display2(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm)
+  (verbose > 0) && @printf("%5s  %7s  %5s\n", "k", "‖Rₖ‖", "timer")
+  kdisplay(iter, verbose) && @printf("%5d  %7.1e  %.2fs\n", iter, rNorm, ktimer(start_time))
 
   # Stopping criterion.
   solved = rNorm ≤ ε
   tired = iter ≥ itmax
+  overtimed = false
   status = "unknown"
 
-  while !(solved || tired)
+  while !(solved || tired || overtimed)
 
     NisI ? Y = P : mul!(Y, N, P)           # Yₖ = N⁻¹Pₖ
     mul!(V, A, Y)                          # Vₖ = AYₖ
@@ -249,11 +266,11 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
     X .+= ω .* Y                           # Xₖ₊₁ = Xₐᵤₓ + ωₖN⁻¹Uₖ
     R .= U .- ω .* Q                       # Rₖ₊₁ = Uₖ - ωₖQₖ
     D = mul!(D, Cᵀ, Q)                     # Dₖ = CᵀQₖ
-    β .= D                                 # Kₖβₖ = Dₖ, βₖ is a p×p matrix
+    β .= D                                 # Kₖβₖ = Dₖ, βₖ is a p×p matrix
     CUSOLVER.ormqr!('L', 'T', K_factorized, τ, β)
     CUBLAS.trsm!('L', 'U', 'N', 'N', one(T), K_factorized, β)
     U .= P .- ω .* V                       # Uₐᵤₓ = Pₖ - ωₖVₖ, temporary storage
-    mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
+    mul!(P, U, β)                          # Pₐᵤₓ = Uₖβₖ
     P .= R .- P                            # Pₖ₊₁ = Rₖ₊₁ - Pₐᵤₓ
 
     iter = iter + 1
@@ -263,11 +280,20 @@ function block_bicgstab!(solver :: BlockBicgstabSolver{T,CuMatrix{T}},
     # Update stopping criterion.
     solved = rNorm ≤ ε
     tired = iter ≥ itmax
-    display2(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm)
+    timer = time_ns() - start_time
+    overtimed = timer > timemax_ns
+    kdisplay(iter, verbose) && @printf("%5d  %7.1e  %.2fs\n", iter, rNorm, ktimer(start_time))
   end
   (verbose > 0) && @printf("\n")
 
+  # Termination status
+  tired     && (status = "maximum number of iterations exceeded")
+  solved    && (status = "solution good enough given atol and rtol")
+  overtimed && (status = "time limit exceeded")
+
+  stats.niter = iter
   stats.solved = solved
-  stats.status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
+  stats.timer = ktimer(start_time)
+  stats.status = status
   return (X, stats)
 end
