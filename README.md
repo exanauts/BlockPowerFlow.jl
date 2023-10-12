@@ -5,5 +5,5 @@ right-hand side on the GPU.
 
 Currently, BlockPowerFlow implements:
 - A block-BICGSTAB algorithm
+- A block-GMRES algorithm
 - A wrapper to `CUSOLVERRF`
-

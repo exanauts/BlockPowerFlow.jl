@@ -8,18 +8,15 @@ using CUDA.CUSOLVER
 
 import CUDA.CUBLAS: unsafe_batch, unsafe_strided_batch
 
-include("libcusolverRf_common.jl")
-include("libcusolverRf_api.jl")
-
 function cusolverRfCreate()
-    handle_ref = Ref{cusolverRfHandle_t}()
-    cusolverRfCreate(handle_ref)
+    handle_ref = Ref{CUSOLVER.cusolverRfHandle_t}()
+    CUSOLVER.cusolverRfCreate(handle_ref)
     return handle_ref[]
 end
 
 function _cusolverRfDestroy(handle)
     if handle != C_NULL
-        cusolverRfDestroy(handle)
+        CUSOLVER.cusolverRfDestroy(handle)
         handle = C_NULL
     end
 end
@@ -27,7 +24,7 @@ end
 abstract type CusolverFactorization{T} <: LinearAlgebra.Factorization{T} end
 
 struct CusolverRfLU{T} <: CusolverFactorization{T}
-    gH::Ptr{cusolverRfHandle_t}
+    gH::Ptr{CUSOLVER.cusolverRfHandle_t}
     nrhs::Int
     n::Int
     m::Int
@@ -42,7 +39,7 @@ end
 # Batch mode should not mix with classical LU factorization.
 # We implement a structure apart.
 struct CusolverRfLUBatch{T} <: CusolverFactorization{T}
-    gH::Ptr{cusolverRfHandle_t}
+    gH::Ptr{CUSOLVER.cusolverRfHandle_t}
     batchsize::Int
     n::Int
     m::Int
@@ -128,9 +125,9 @@ function glu_analysis_host(
 
     # LU Factorization
     info = Ref{CUSOLVER.csrqrInfo_t}()
-    status = cusolverSpCreateCsrluInfoHost(info)
+    status = CUSOLVER.cusolverSpCreateCsrluInfoHost(info)
 
-    status = cusolverSpXcsrluAnalysisHost(
+    status = CUSOLVER.cusolverSpXcsrluAnalysisHost(
         spH,
         m, nnzA, desca,
         h_rowsB, h_colsB, info[],
@@ -138,7 +135,7 @@ function glu_analysis_host(
 
     size_internal = Ref{Cint}(0)
     size_lu = Ref{Cint}(0)
-    status = cusolverSpDcsrluBufferInfoHost(
+    status = CUSOLVER.cusolverSpDcsrluBufferInfoHost(
         spH,
         n, nnzA, desca,
         h_valsB, h_rowsB, h_colsB,
@@ -150,7 +147,7 @@ function glu_analysis_host(
     buffer_lu = Base.Libc.malloc(n_bytes)
     pivot_threshold = 1.0
 
-    status = cusolverSpDcsrluFactorHost(
+    status = CUSOLVER.cusolverSpDcsrluFactorHost(
         spH, n, nnzA, desca,
         h_valsB, h_rowsB, h_colsB,
         info[], pivot_threshold,
@@ -159,7 +156,7 @@ function glu_analysis_host(
 
     # Check singularity
     singularity = Ref{Cint}(0)
-    status = cusolverSpDcsrluZeroPivotHost(
+    status = CUSOLVER.cusolverSpDcsrluZeroPivotHost(
         spH, info[], tol, singularity,
     )
 
@@ -171,7 +168,7 @@ function glu_analysis_host(
     # Get size of L and U
     pnnzU = Ref{Cint}(0)
     pnnzL = Ref{Cint}(0)
-    status = cusolverSpXcsrluNnzHost(
+    status = CUSOLVER.cusolverSpXcsrluNnzHost(
         spH,
         pnnzL, pnnzU, info[],
     )
@@ -192,7 +189,7 @@ function glu_analysis_host(
     h_colsU = zeros(Cint, nnzU)
 
     # Extract
-    status = cusolverSpDcsrluExtractHost(
+    status = CUSOLVER.cusolverSpDcsrluExtractHost(
         spH,
         h_Plu, h_Qlu,
         desca,
@@ -257,35 +254,35 @@ function CusolverRfLU(
     lu = glu_analysis_host(n, m, nnzA, h_rowsA, h_colsA, h_valsA, ordering, tol)
 
     # Create handle
-    gH = cusolverRfCreate()
+    gH = CUSOLVER.cusolverRfCreate()
 
     ## OPTIONS
     # Set fast mode
     if fast_mode
-        status = cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
     else
-        status = cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
     end
     # Set numeric properties
     nzero = 0.0
     nboost = 0.0
-    status = cusolverRfSetNumericProperties(gH, nzero, nboost)
+    status = CUSOLVER.cusolverRfSetNumericProperties(gH, nzero, nboost)
 
     # Set matrix format
-    status = cusolverRfSetMatrixFormat(
+    status = CUSOLVER.cusolverRfSetMatrixFormat(
         gH,
         CUSOLVERRF_MATRIX_FORMAT_CSR,
         CUSOLVERRF_UNIT_DIAGONAL_ASSUMED_L
     )
 
-    status = cusolverRfSetAlgs(
+    status = CUSOLVER.cusolverRfSetAlgs(
         gH,
         CUSOLVERRF_FACTORIZATION_ALG2,
         CUSOLVERRF_TRIANGULAR_SOLVE_ALG2,
     )
 
     # Assemble internal data structures
-    status = cusolverRfSetupHost(
+    status = CUSOLVER.cusolverRfSetupHost(
         n, nnzA, h_rowsA, h_colsA, h_valsA,
         lu.nnzL, lu.rowsL, lu.colsL, lu.valsL,
         lu.nnzU, lu.rowsU, lu.colsU, lu.valsU,
@@ -293,9 +290,9 @@ function CusolverRfLU(
         gH
     )
     # Analyze available parallelism
-    status = CUDA.@sync cusolverRfAnalyze(gH)
+    status = CUDA.@sync CUSOLVER.cusolverRfAnalyze(gH)
     # LU refactorization
-    status = CUDA.@sync cusolverRfRefactor(gH)
+    status = CUDA.@sync CUSOLVER.cusolverRfRefactor(gH)
 
     return CusolverRfLU{T}(
         gH, nrhs, n, m, nnzA,
@@ -305,14 +302,14 @@ end
 
 # Update factorization inplace
 function update!(rflu::CusolverRfLU{T}, A::AbstractCuSparseMatrix{T}) where T
-    status = CUDA.@sync cusolverRfResetValues(
+    status = CUDA.@sync CUSOLVER.cusolverRfResetValues(
         rflu.n, rflu.nnzA,
         rflu.drowsA, rflu.dcolsA, A.nzVal, rflu.dP, rflu.dQ,
         rflu.gH
     )
 
     # LU refactorization
-    status = CUDA.@sync cusolverRfRefactor(rflu.gH)
+    status = CUDA.@sync CUSOLVER.cusolverRfRefactor(rflu.gH)
     return
 end
 
@@ -322,14 +319,14 @@ function LinearAlgebra.ldiv!(x::CuArray{T}, rflu::CusolverRfLU{T}, b::CuArray{T}
     nrhs = 1
     copyto!(x, b)
     # Forward and backward solve
-    status = CUDA.@sync cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
+    status = CUDA.@sync CUSOLVER.cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
     return
 end
 function LinearAlgebra.ldiv!(rflu::CusolverRfLU{T}, x::CuArray{T}) where T
     n = rflu.n
     nrhs = 1
     # Forward and backward solve
-    status = CUDA.@sync cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
+    status = CUDA.@sync CUSOLVER.cusolverRfSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, x, n)
     return
 end
 
@@ -376,33 +373,33 @@ function CusolverRfLUBatch(
     ## OPTIONS
     # Set fast mode
     if fast_mode
-        status = cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
     else
-        status = cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
     end
     # Set numeric properties
     nzero = 0.0
     nboost = 0.0
-    status = cusolverRfSetNumericProperties(gH, nzero, nboost)
+    status = CUSOLVER.cusolverRfSetNumericProperties(gH, nzero, nboost)
 
     # Set matrix format
-    status = cusolverRfSetMatrixFormat(
+    status = CUSOLVER.cusolverRfSetMatrixFormat(
         gH,
-        CUSOLVERRF_MATRIX_FORMAT_CSR,
-        CUSOLVERRF_UNIT_DIAGONAL_ASSUMED_L
+        CUSOLVER.CUSOLVERRF_MATRIX_FORMAT_CSR,
+        CUSOLVER.CUSOLVERRF_UNIT_DIAGONAL_ASSUMED_L
     )
 
     status = cusolverRfSetAlgs(
         gH,
-        CUSOLVERRF_FACTORIZATION_ALG2,
-        CUSOLVERRF_TRIANGULAR_SOLVE_ALG2,
+        CUSOLVER.CUSOLVERRF_FACTORIZATION_ALG2,
+        CUSOLVER.CUSOLVERRF_TRIANGULAR_SOLVE_ALG2,
     )
 
     # Assemble internal data structures
     h_valsA_batch = zeros(batchsize, nnzA)
     h_valsA_batch = Vector{Float64}[copy(h_valsA) for i in 1:batchsize]
     ptrA_batch = pointer.(h_valsA_batch)
-    status = cusolverRfBatchSetupHost(
+    status = CUSOLVER.cusolverRfBatchSetupHost(
         batchsize,
         n, nnzA, h_rowsA, h_colsA, ptrA_batch,
         lu.nnzL, lu.rowsL, lu.colsL, lu.valsL,
@@ -411,9 +408,9 @@ function CusolverRfLUBatch(
         gH
     )
     # Analyze available parallelism
-    status = CUDA.@sync cusolverRfBatchAnalyze(gH)
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchAnalyze(gH)
     # LU refactorization
-    status = CUDA.@sync cusolverRfBatchRefactor(gH)
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchRefactor(gH)
 
     return CusolverRfLUBatch{T}(
         gH, batchsize, n, m, nnzA,
@@ -425,14 +422,14 @@ end
 function update!(rflu::CusolverRfLUBatch{T}, A::AbstractCuSparseMatrix) where T
     ptrs = [pointer(A.nzVal) for i in 1:rflu.batchsize]
     Aptrs = CuArray(ptrs)
-    status = CUDA.@sync cusolverRfBatchResetValues(
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchResetValues(
         rflu.batchsize, rflu.n, rflu.nnzA,
         rflu.drowsA, rflu.dcolsA, Aptrs, rflu.dP, rflu.dQ,
         rflu.gH
     )
 
     # LU refactorization
-    status = CUDA.@sync cusolverRfBatchRefactor(rflu.gH)
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchRefactor(rflu.gH)
     return
 end
 
@@ -447,7 +444,7 @@ function solve!(x::Vector{CuVector{T}}, rflu::CusolverRfLUBatch{T}, b::Vector{Cu
     end
     Xptrs = unsafe_batch(x)
     # Forward and backward solve
-    status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
     return
 end
 
@@ -458,7 +455,7 @@ function LinearAlgebra.ldiv!(x::CuMatrix{T}, rflu::CusolverRfLUBatch{T}, b::CuMa
     copyto!(x, b)
     Xptrs = unsafe_strided_batch(x)
     # Forward and backward solve
-    status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
     return
 end
 
@@ -468,7 +465,7 @@ function LinearAlgebra.ldiv!(rflu::CusolverRfLUBatch{T}, X::CuMatrix{T}) where T
     nrhs = 1
     Xptrs = unsafe_strided_batch(X)
     # Forward and backward solve
-    status = CUDA.@sync cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
+    status = CUDA.@sync CUSOLVER.cusolverRfBatchSolve(rflu.gH, rflu.dP, rflu.dQ, nrhs, rflu.dT, n, Xptrs, n)
     return
 end
 
@@ -479,9 +476,8 @@ function rf_batch_refactor!(rflu::CusolverRfLUBatch{T}, Anzval::CuMatrix{T}) whe
         rflu.drowsA, rflu.dcolsA, Aptrs, rflu.dP, rflu.dQ,
         rflu.gH
     )
-    CUDA.@sync cusolverRfBatchRefactor(rflu.gH)
+    CUDA.@sync CUSOLVER.cusolverRfBatchRefactor(rflu.gH)
     return
 end
 
 end
-
