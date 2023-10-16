@@ -45,7 +45,7 @@ if AMDGPU.functional()
 
         # Parameters
         m,n = size(A)
-        s,p = size(P)
+        s,p = size(B)
         verbose = 1
         rtol = 0.0
         atol = 1e-10
@@ -54,7 +54,7 @@ if AMDGPU.functional()
 
         println("Problem $name of size ($m,$n) with $p right-hand sides.")
 
-        # Solve the linear system with a preconditioner
+        # Solve the linear system with a right preconditioner ILU(0)
         println("Problem $name with a preconditioner")
         X_gmres, stats = BPF.block_gmres(A, B; N=P, ldiv=true, verbose, atol, rtol, memory, itmax)
         RNorm = norm(B - A * X_gmres)
@@ -67,4 +67,3 @@ if AMDGPU.functional()
         println("‖Rₖ‖: ", RNorm)
     end
 end
-

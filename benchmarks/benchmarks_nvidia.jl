@@ -21,25 +21,55 @@ name = "case9241pegase"
 # name = "case_ACTIVSg25k"
 # name = "case_ACTIVSg70k"
 
-path_A = joinpath(@__DIR__, "dump", "Gx_$(name).mtx")
-path_B = joinpath(@__DIR__, "dump", "Gu_$(name).mtx")
+if CUDA.functional()
+    path_A = joinpath(@__DIR__, "dump", "Gx_$(name).mtx")
+    path_B = joinpath(@__DIR__, "dump", "Gu_$(name).mtx")
 
-A = mmread(path_A) 
-B = mmread(path_B)
-B = Matrix(B)
+    # Storage on CPU
+    A = mmread(path_A)
+    B = mmread(path_B)
+    B = Matrix(B)
 
-verbose = 1
-m, n = size(A)
-itmax = 5
-gpu = false
+    # Storage on GPU
+    A = CuSparseMatrixCSR(A)
+    B = CuMatrix(B)
 
-nblocks = div(n, 32)
-device = gpu ? ExaPF.CUDABackend() : ExaPF.CPU()
-P = LS.BlockJacobiPreconditioner(A, nblocks, device)
-A = gpu ? CuSparseMatrixCSR(A) : A
-B = gpu ? CuMatrix(B) : B
-LS.update(P, A, device)
+    # Create the ILU(0) preconditioner
+    P = BPF.ilu0(A)
 
-X_gmres, stats = BPF.block_gmres(A, B; N=P, memory=1, verbose, itmax, rtol=0.0, atol=1e-10)
-RNorm = norm(B - A * X_gmres)
-println("‖Rₖ‖ : ", RNorm)
+    # Create a block-Jacobi preconditioner
+    size_block = 32
+    nblocks = div(n, size_block)
+    device = ExaPF.CUDABackend()
+    BJ = LS.BlockJacobiPreconditioner(A, nblocks, device)
+    LS.update(BJ, A, device)
+
+    # Parameters
+    m,n = size(A)
+    s,p = size(B)
+    verbose = 1
+    rtol = 0.0
+    atol = 1e-10
+    memory = 1
+    itmax = 50
+
+    println("Problem $name of size ($m,$n) with $p right-hand sides.")
+
+    # Solve the linear system with a preconditioner ILU(0)
+    println("Problem $name with a right preconditioner ILU(0)")
+    X_gmres, stats = BPF.block_gmres(A, B; N=P, ldiv=true, verbose, atol, rtol, memory, itmax)
+    RNorm = norm(B - A * X_gmres)
+    println("‖Rₖ‖: ", RNorm)
+
+    # Solve the linear system with a preconditioner ILU(0)
+    println("Problem $name with a right preconditioner block-Jacobi")
+    X_gmres, stats = BPF.block_gmres(A, B; N=BJ, verbose, atol, rtol, memory, itmax)
+    RNorm = norm(B - A * X_gmres)
+    println("‖Rₖ‖: ", RNorm)
+
+    # Solve the linear system without a preconditioner
+    println("Problem $name without a preconditioner")
+    X_gmres, stats = BPF.block_gmres(A, B; verbose, atol, rtol, memory, itmax)
+    RNorm = norm(B - A * X_gmres)
+    println("‖Rₖ‖: ", RNorm)
+end
