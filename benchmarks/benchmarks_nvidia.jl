@@ -1,7 +1,11 @@
 using MatrixMarket
+using SparseArrays
+using LinearAlgebra
 
+import KernelAbstractions
 using CUDA
 using CUDA.CUSPARSE
+
 import ExaPF
 import BlockPowerFlow
 
@@ -35,7 +39,9 @@ if CUDA.functional()
     B = CuMatrix(B)
 
     # Create the ILU(0) preconditioner
-    P = BPF.ilu0(A)
+    m,n = size(A)
+    s,p = size(B)
+    P = BPF.ilu0(A, p)
 
     # Create a block-Jacobi preconditioner
     size_block = 32
@@ -45,31 +51,30 @@ if CUDA.functional()
     LS.update(BJ, A, device)
 
     # Parameters
-    m,n = size(A)
-    s,p = size(B)
     verbose = 1
     rtol = 0.0
     atol = 1e-10
     memory = 1
+    restart = false
     itmax = 50
 
-    println("Problem $name of size ($m,$n) with $p right-hand sides.")
+    println("Problem $name of size ($m,$n) with $p right-hand sides.\n")
 
-    # Solve the linear system with a preconditioner ILU(0)
+    # Solve the linear system with a right preconditioner ILU(0)
     println("Problem $name with a right preconditioner ILU(0)")
-    X_gmres, stats = BPF.block_gmres(A, B; N=P, ldiv=true, verbose, atol, rtol, memory, itmax)
+    X_gmres, stats = BPF.block_gmres(A, B; N=P, ldiv=true, verbose, atol, rtol, memory, restart, itmax)
     RNorm = norm(B - A * X_gmres)
     println("‖Rₖ‖: ", RNorm)
 
-    # Solve the linear system with a preconditioner ILU(0)
+    # Solve the linear system with a right preconditioner block-Jacobi
     println("Problem $name with a right preconditioner block-Jacobi")
-    X_gmres, stats = BPF.block_gmres(A, B; N=BJ, verbose, atol, rtol, memory, itmax)
+    X_gmres, stats = BPF.block_gmres(A, B; N=BJ, verbose, atol, rtol, memory, restart, itmax)
     RNorm = norm(B - A * X_gmres)
     println("‖Rₖ‖: ", RNorm)
 
     # Solve the linear system without a preconditioner
     println("Problem $name without a preconditioner")
-    X_gmres, stats = BPF.block_gmres(A, B; verbose, atol, rtol, memory, itmax)
+    X_gmres, stats = BPF.block_gmres(A, B; verbose, atol, rtol, memory, restart, itmax)
     RNorm = norm(B - A * X_gmres)
     println("‖Rₖ‖: ", RNorm)
 end
