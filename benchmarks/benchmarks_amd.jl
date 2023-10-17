@@ -1,8 +1,11 @@
 using MatrixMarket
+using SparseArrays
+using LinearAlgebra
 
+import KernelAbstractions
 using AMDGPU
 using AMDGPU.rocSPARSE, SparseArrays
-import KernelAbstractions
+
 import ExaPF
 import BlockPowerFlow
 
@@ -50,19 +53,20 @@ if AMDGPU.functional()
         rtol = 0.0
         atol = 1e-10
         memory = 1
+        restart = false
         itmax = 50
 
-        println("Problem $name of size ($m,$n) with $p right-hand sides.")
+        println("Problem $name of size ($m,$n) with $p right-hand sides.\n")
 
         # Solve the linear system with a right preconditioner ILU(0)
         println("Problem $name with a preconditioner")
-        X_gmres, stats = BPF.block_gmres(A, B; N=P, ldiv=true, verbose, atol, rtol, memory, itmax)
+        X_gmres, stats = BPF.block_gmres(A, B; N=P, ldiv=true, verbose, atol, rtol, memory, restart, itmax)
         RNorm = norm(B - A * X_gmres)
         println("‖Rₖ‖: ", RNorm)
 
         # Solve the linear system without a preconditioner
         println("Problem $name without a preconditioner")
-        X_gmres, stats = BPF.block_gmres(A, B; verbose, atol, rtol, memory, itmax)
+        X_gmres, stats = BPF.block_gmres(A, B; verbose, atol, rtol, memory, restart, itmax)
         RNorm = norm(B - A * X_gmres)
         println("‖Rₖ‖: ", RNorm)
     end

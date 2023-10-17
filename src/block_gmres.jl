@@ -276,6 +276,7 @@ function block_gmres!(solver :: BlockGMRESSolver{T,FC,SV,SM}, A, B::AbstractMatr
     householder!(V[1], Z[1], τ[1])
 
     npass = npass + 1
+    inner_iter = 0
     inner_tired = false
 
     while !(solved || inner_tired || overtimed)
