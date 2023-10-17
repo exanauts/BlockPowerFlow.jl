@@ -86,7 +86,7 @@ uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 
 [[deps.BlockPowerFlow]]
 deps = ["AMDGPU", "CUDA", "KernelAbstractions", "LinearAlgebra", "Printf", "SparseArrays", "Test"]
-git-tree-sha1 = "f365f923fc68f60632bd7026dc4d7ff7fe59e49c"
+git-tree-sha1 = "fc73293196c47fe77f35533c3e4b6ffa84665128"
 repo-rev = "master"
 repo-url = "https://github.com/exanauts/BlockPowerFlow.jl"
 uuid = "0ca6dcf5-c23f-4097-a3ba-dae6c919a0c0"
