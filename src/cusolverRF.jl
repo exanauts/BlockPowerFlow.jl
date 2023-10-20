@@ -124,7 +124,7 @@ function glu_analysis_host(
     h_valsB = h_valsA[h_mapBfromA]
 
     # LU Factorization
-    info = Ref{CUSOLVER.csrqrInfo_t}()
+    info = Ref{CUSOLVER.csrluInfoHost_t}()
     status = CUSOLVER.cusolverSpCreateCsrluInfoHost(info)
 
     status = CUSOLVER.cusolverSpXcsrluAnalysisHost(
@@ -133,8 +133,8 @@ function glu_analysis_host(
         h_rowsB, h_colsB, info[],
     )
 
-    size_internal = Ref{Cint}(0)
-    size_lu = Ref{Cint}(0)
+    size_internal = Ref{Csize_t}(0)
+    size_lu = Ref{Csize_t}(0)
     status = CUSOLVER.cusolverSpDcsrluBufferInfoHost(
         spH,
         n, nnzA, desca,
@@ -254,14 +254,14 @@ function CusolverRfLU(
     lu = glu_analysis_host(n, m, nnzA, h_rowsA, h_colsA, h_valsA, ordering, tol)
 
     # Create handle
-    gH = CUSOLVER.cusolverRfCreate()
+    gH = cusolverRfCreate()
 
     ## OPTIONS
     # Set fast mode
     if fast_mode
-        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVER.CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
     else
-        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVER.CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
     end
     # Set numeric properties
     nzero = 0.0
@@ -271,14 +271,14 @@ function CusolverRfLU(
     # Set matrix format
     status = CUSOLVER.cusolverRfSetMatrixFormat(
         gH,
-        CUSOLVERRF_MATRIX_FORMAT_CSR,
-        CUSOLVERRF_UNIT_DIAGONAL_ASSUMED_L
+        CUSOLVER.CUSOLVERRF_MATRIX_FORMAT_CSR,
+        CUSOLVER.CUSOLVERRF_UNIT_DIAGONAL_ASSUMED_L
     )
 
     status = CUSOLVER.cusolverRfSetAlgs(
         gH,
-        CUSOLVERRF_FACTORIZATION_ALG2,
-        CUSOLVERRF_TRIANGULAR_SOLVE_ALG2,
+        CUSOLVER.CUSOLVERRF_FACTORIZATION_ALG2,
+        CUSOLVER.CUSOLVERRF_TRIANGULAR_SOLVE_ALG2,
     )
 
     # Assemble internal data structures
@@ -373,9 +373,9 @@ function CusolverRfLUBatch(
     ## OPTIONS
     # Set fast mode
     if fast_mode
-        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVER.CUSOLVERRF_RESET_VALUES_FAST_MODE_ON)
     else
-        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
+        status = CUSOLVER.cusolverRfSetResetValuesFastMode(gH, CUSOLVER.CUSOLVERRF_RESET_VALUES_FAST_MODE_OFF)
     end
     # Set numeric properties
     nzero = 0.0
@@ -389,7 +389,7 @@ function CusolverRfLUBatch(
         CUSOLVER.CUSOLVERRF_UNIT_DIAGONAL_ASSUMED_L
     )
 
-    status = cusolverRfSetAlgs(
+    status = CUSOLVER.cusolverRfSetAlgs(
         gH,
         CUSOLVER.CUSOLVERRF_FACTORIZATION_ALG2,
         CUSOLVER.CUSOLVERRF_TRIANGULAR_SOLVE_ALG2,
