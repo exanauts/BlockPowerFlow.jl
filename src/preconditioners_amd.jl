@@ -42,7 +42,7 @@ end
 
 function ilu0(A::Union{ROCSparseMatrixCSC{T,Cint},ROCSparseMatrixCSR{T,Cint}}) where T <: LinearAlgebra.BlasFloat
   P = ilu0(A, 'O')
-  return AMD_IC0(P)
+  return AMD_ILU0(P)
 end
 
 function ldiv!(y::ROCVector{T}, ilu::AMD_ILU0{ROCSparseMatrixCSR{T,Cint}}, x::ROCVector{T}) where T <: LinearAlgebra.BlasFloat
